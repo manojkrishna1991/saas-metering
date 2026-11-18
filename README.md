@@ -1,0 +1,105 @@
+# SaaS Metering Engine
+
+A multi-module Spring Boot system for usage-based billing of a SaaS platform. Tenants are onboarded, assigned a billing plan (included calls, overage price, rate-limit rules), and their API usage is metered and billed.
+
+> **Status:** early development. Only the `control-plane` module is implemented (Stories 1.1 and 1.2). The other modules are skeletons.
+
+## Tech stack
+- Java 21, Gradle (wrapper included), multi-module build
+- Spring Boot 4.1.2: Web, Data JPA, Validation, Actuator
+- PostgreSQL (runtime), H2 (tests)
+- springdoc-openapi 3.2.0 (Swagger UI)
+- Lombok, JUnit 5, Mockito, MockMvc
+
+## Modules
+| Module | Purpose | State |
+|---|---|---|
+| `common-domain` | shared library for types used across services | skeleton |
+| `control-plane` | admin API: tenants, plans, subscriptions | implemented |
+| `ingestion-service` | receives usage events (planned: Kafka, Redis) | skeleton |
+| `billing-worker` | turns usage into charges (planned) | skeleton |
+
+## Features implemented (control-plane)
+- **Story 1.1, Tenant onboarding:** `POST /v1/tenants`. Names are unique, case-insensitive.
+- **Story 1.2, Subscription and plan assignment:**
+  - Plans with included calls, overage price in paise (₹2/call = 200) and rate-limit rules (`REQUESTS_PER_WINDOW`, `USAGE_PERCENT_ALERT`, `HARD_CAP`).
+  - A tenant has at most one active subscription. Changing plan cancels the old subscription and starts a new one, so history is kept.
+  - `FREE` and `PRO` plans are seeded on startup.
+  - Rate-limit rules are stored and validated only. Enforcement is not built yet.
+
+## API
+Base path `/v1`. Errors are RFC 7807 `application/problem+json`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/tenants` | register a tenant |
+| POST | `/plans` | create a plan with rules |
+| GET | `/plans` | list plans (`?active=true`) |
+| GET | `/plans/{id}` | get a plan |
+| PUT | `/plans/{id}` | update a plan (`code` is immutable, rules are replaced) |
+| POST | `/tenants/{tenantId}/subscription` | assign `{"planCode": "PRO"}`, switching if one is active |
+| GET | `/tenants/{tenantId}/subscription` | current active subscription |
+| GET | `/tenants/{tenantId}/subscriptions` | history, newest first |
+| DELETE | `/tenants/{tenantId}/subscription` | cancel the active subscription |
+
+Status codes: 400 validation, 404 not found, 409 conflict (duplicate, same plan, inactive plan, non-active tenant), 422 contradictory rate-limit rules.
+
+Example:
+```bash
+curl -X POST localhost:8080/v1/tenants -H 'Content-Type: application/json' -d '{"name":"Globex Corp"}'
+curl -X POST localhost:8080/v1/tenants/<tenantId>/subscription -H 'Content-Type: application/json' -d '{"planCode":"PRO"}'
+```
+
+Interactive docs, once the app is running:
+- Swagger UI: http://localhost:8080/swagger-ui.html
+- OpenAPI JSON: http://localhost:8080/v3/api-docs
+
+## Getting started
+Prerequisites: JDK 21 (Gradle can fetch it via the toolchain) and a PostgreSQL database.
+
+Build and test everything:
+```bash
+./gradlew build
+```
+
+Run only the tests:
+```bash
+./gradlew test
+```
+
+Run the control plane. `application.properties` has no datasource yet, so pass one (adjust to your database):
+```bash
+./gradlew :control-plane:bootRun --args='--spring.datasource.url=jdbc:postgresql://localhost:5432/metering --spring.datasource.username=postgres --spring.datasource.password=postgres --spring.jpa.hibernate.ddl-auto=update'
+```
+
+Tests run on in-memory H2 and need no database. They use `app.seed-plans=false`; set it to `false` yourself if you want to skip plan seeding at runtime.
+
+## Project layout
+```
+specs/                      spec-driven development: one spec per story
+control-plane/src/main/java/com/saas/metering/controlplane/
+  config/                   JPA auditing, OpenAPI config
+  web/                      GlobalExceptionHandler (RFC 7807 errors)
+  plan/ subscription/ tenant/
+    controller/ service/ repository/
+    entity/  dto/  mapper/  exception/  utils/
+```
+Request flow is `Controller` → `Service` → `Repository`. A service is the only class that uses its own repository; other features go through that service (for example `SubscriptionService` uses `TenantService` and `PlanService`). Entities are never returned directly: controllers return DTOs built by the mappers.
+
+## Spec-driven development
+Each story starts as a spec in [`specs/`](specs/), is confirmed, then implemented against it:
+- [1.1 Tenant onboarding](specs/1.1-tenant-onboarding.md)
+- [1.2 Subscription and plan assignment](specs/1.2-subscription-plan-assignment.md)
+
+## Design notes
+- **Money** is stored as integer paise (INR only, monthly billing only for now). No floating point.
+- **One active subscription per tenant** is enforced with a pessimistic lock on the tenant row, not a database constraint, because H2 has no partial unique indexes. A concurrency test covers this.
+- **Plan edits** apply to current subscribers directly; prices are not snapshotted per subscription.
+- **Schema** comes from Hibernate. There is no Flyway or Liquibase yet.
+
+## Known gaps
+- No authentication or authorisation on any endpoint.
+- No datasource or `ddl-auto` configured in the main `application.properties`.
+- Rate limits are stored but not enforced; usage ingestion and billing are not built.
+- Free Tier values (1,000 calls, hard cap, 60 requests per minute) are placeholders.
+- No tenant get, list or update endpoints.
