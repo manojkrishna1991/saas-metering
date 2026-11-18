@@ -1,0 +1,6 @@
+rootProject.name = 'saas-metering-engine'
+
+include 'common-domain'
+include 'control-plane'
+include 'ingestion-service'
+include 'billing-worker'
