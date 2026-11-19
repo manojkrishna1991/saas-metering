@@ -8,7 +8,7 @@ A multi-module Spring Boot system for usage-based billing of a SaaS platform. Te
 - Java 21, Gradle (wrapper included), multi-module build
 - Spring Boot 4.1.2: Web, Data JPA, Validation, Actuator
 - PostgreSQL (runtime), H2 (tests)
-- Redis (idempotency keys) and Apache Kafka (event stream) for ingestion
+- Redis (idempotency keys, usage counters, quota limits) and Apache Kafka (event stream) for ingestion, quota enforcement and billing
 - springdoc-openapi 3.2.0 (Swagger UI)
 - Lombok, JUnit 5, Mockito, MockMvc
 
@@ -68,7 +68,7 @@ Interactive docs, once the app is running:
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
 ## Getting started
-Prerequisites: JDK 21 (Gradle can fetch it via the toolchain) and a PostgreSQL database.
+Prerequisites: JDK 21 (Gradle can fetch it via the toolchain), a PostgreSQL database, Redis and Kafka. The control-plane and billing-worker must share one database, because the worker reads the control-plane's `plans` and `subscriptions` tables.
 
 Build and test everything:
 ```bash
@@ -85,19 +85,28 @@ Run the ingestion service (needs Redis on `localhost:6379` and Kafka on `localho
 ./gradlew :ingestion-service:bootRun
 ```
 
-Run the control plane. `application.properties` has no datasource yet, so pass one (adjust to your database):
+Run the billing worker (needs Kafka; defaults to an in-memory H2 database, so point it at the control-plane's database for real invoicing):
+```bash
+./gradlew :billing-worker:bootRun
+```
+
+Run the control plane (needs Redis for the quota cache, or pass `--app.quota-cache.enabled=false`). `application.properties` has no datasource yet, so pass one (adjust to your database):
 ```bash
 ./gradlew :control-plane:bootRun --args='--spring.datasource.url=jdbc:postgresql://localhost:5432/metering --spring.datasource.username=postgres --spring.datasource.password=postgres --spring.jpa.hibernate.ddl-auto=update'
 ```
 
-Tests run on in-memory H2 and need no database. They use `app.seed-plans=false`; set it to `false` yourself if you want to skip plan seeding at runtime.
+Tests run on in-memory H2 and need no database, Redis or Kafka. They use `app.seed-plans=false`; set it to `false` yourself if you want to skip plan seeding at runtime.
 
 ## Project layout
 ```
 specs/                      spec-driven development: one spec per story
+common-domain/              UsageEvent (shared event contract)
+ingestion-service/          ingestion/ (controller, service, properties), web/ (error handling)
+billing-worker/             aggregation/ (Kafka listener, aggregates), invoice/ (rating, invoices), config/
 control-plane/src/main/java/com/saas/metering/controlplane/
   config/                   JPA auditing, OpenAPI config
   web/                      GlobalExceptionHandler (RFC 7807 errors)
+  quota/                    QuotaCacheSync: pushes hard limits to Redis
   plan/ subscription/ tenant/
     controller/ service/ repository/
     entity/  dto/  mapper/  exception/  utils/
