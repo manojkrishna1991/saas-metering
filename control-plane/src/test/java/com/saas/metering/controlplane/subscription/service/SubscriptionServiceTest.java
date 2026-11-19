@@ -35,6 +35,7 @@ class SubscriptionServiceTest {
     @Mock private SubscriptionRepository subscriptionRepository;
     @Mock private PlanService planService;
     @Mock private TenantService tenantService;
+    @Mock private org.springframework.context.ApplicationEventPublisher events;
 
     private SubscriptionService service;
     private final UUID tenantId = UUID.randomUUID();
@@ -44,7 +45,7 @@ class SubscriptionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SubscriptionService(subscriptionRepository, planService, tenantService);
+        service = new SubscriptionService(subscriptionRepository, planService, tenantService, events);
         tenant = Tenant.builder().id(tenantId).name("Globex").status(TenantStatus.ACTIVE).build();
         free = Plan.builder().id(UUID.randomUUID()).code("FREE").active(true).build();
         pro = Plan.builder().id(UUID.randomUUID()).code("PRO").active(true).build();

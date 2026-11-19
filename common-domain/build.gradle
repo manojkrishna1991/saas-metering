@@ -1,4 +1,4 @@
 // Pure library module, no web starter needed
 dependencies {
-    // Add shared domain dependencies here if needed
+    compileOnly 'jakarta.validation:jakarta.validation-api'
 }

@@ -10,6 +10,8 @@ import com.saas.metering.controlplane.plan.service.PlanService;
 import com.saas.metering.controlplane.tenant.entity.Tenant;
 import com.saas.metering.controlplane.tenant.service.TenantService;
 import com.saas.metering.controlplane.tenant.utils.TenantStatus;
+import com.saas.metering.controlplane.quota.SubscriptionChangedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,9 +25,11 @@ public class SubscriptionService {
     private final SubscriptionRepository subscriptionRepository;
     private final PlanService planService;
     private final TenantService tenantService;
+    private final ApplicationEventPublisher events;
 
     public SubscriptionService(SubscriptionRepository subscriptionRepository, PlanService planService,
-                               TenantService tenantService) {
+                               TenantService tenantService, ApplicationEventPublisher events) {
+        this.events = events;
         this.subscriptionRepository = subscriptionRepository;
         this.planService = planService;
         this.tenantService = tenantService;
@@ -55,12 +59,14 @@ public class SubscriptionService {
             subscriptionRepository.saveAndFlush(current);
         });
 
-        return subscriptionRepository.save(Subscription.builder()
+        Subscription saved = subscriptionRepository.save(Subscription.builder()
                 .tenant(tenant)
                 .plan(plan)
                 .status(SubscriptionStatus.ACTIVE)
                 .startDate(now)
                 .build());
+        events.publishEvent(new SubscriptionChangedEvent(tenantId, plan));
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -84,5 +90,6 @@ public class SubscriptionService {
         current.setStatus(SubscriptionStatus.CANCELLED);
         current.setEndDate(Instant.now());
         subscriptionRepository.save(current);
+        events.publishEvent(new SubscriptionChangedEvent(tenantId, null));
     }
 }
